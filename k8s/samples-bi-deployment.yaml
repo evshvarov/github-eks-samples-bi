@@ -1,0 +1,35 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    io.kompose.service: samples-bi
+  name: samples-bi
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        io.kompose.service: samples-bi
+    spec:
+      containers:
+      - image: intersystemsdc/iris-community:2019.4.0.383.0-zpm
+        imagePullPolicy: IfNotPresent
+        name: samples-bi
+        ports:
+        - containerPort: 52773
+        resources: {}
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/bash
+              - -c
+              - |
+                echo -e "write\nhalt" > test
+                until iris session iris < test; do sleep 1; done
+                echo -e "zpm\ninstall samples-bi\nquit\nhalt" > samples_bi_install
+                iris session iris < samples_bi_install
+                rm test samples_bi_install
+      restartPolicy: Always

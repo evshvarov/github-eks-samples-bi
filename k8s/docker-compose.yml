@@ -1,0 +1,10 @@
+version: "3.7"
+services:
+  samples-bi:
+    container_name: samples-bi
+    image: intersystemsdc/iris-community:2019.4.0.383.0-zpm
+    ports:
+    - 52773:52773
+    labels:
+      kompose.service.type: loadbalancer
+      kompose.image-pull-policy: IfNotPresent

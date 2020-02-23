@@ -1,0 +1,120 @@
+name: Provision EKS cluster and deploy Samples BI there
+
+on:
+  push:
+    branches:
+    - master
+
+# Environment variables.
+# ${{ secrets }} are taken from GitHub -> Settings -> Secrets
+# ${{ github.sha }} is the commit hash
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  CLUSTER_NAME: dev-cluster
+  DEPLOYMENT_NAME: samples-bi
+
+jobs:
+  eks-provisioner:
+    # Inspired by:
+    ## https://www.terraform.io/docs/github-actions/getting-started.html
+    ## https://github.com/hashicorp/terraform-github-actions
+    name: Provision EKS cluster
+    runs-on: ubuntu-18.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    # Taken from https://github.community/t5/GitHub-Actions/Accessing-commit-message-in-pull-request-event/td-p/40856
+    - name: Get commit message
+      run: |
+        echo ::set-env name=commit_msg::$(git log --format=%B -n 1 ${{ github.event.after }})
+
+    - name: Show commit message
+      run: echo $commit_msg
+
+    - name: Terraform init
+      uses: hashicorp/terraform-github-actions@master
+      with:
+        tf_actions_version: 0.12.20
+        tf_actions_subcommand: 'init'
+        tf_actions_working_dir: 'terraform'
+
+    - name: Terraform validate
+      uses: hashicorp/terraform-github-actions@master
+      with:
+        tf_actions_version: 0.12.20
+        tf_actions_subcommand: 'validate'
+        tf_actions_working_dir: 'terraform'
+
+    - name: Terraform plan
+      if: "!contains(env.commit_msg, '[destroy eks]')"
+      uses: hashicorp/terraform-github-actions@master
+      with:
+        tf_actions_version: 0.12.20
+        tf_actions_subcommand: 'plan'
+        tf_actions_working_dir: 'terraform'
+
+    # Taken from https://github.com/hashicorp/terraform-github-actions/issues/43
+    - name: Terraform plan for destroy
+      if: "contains(env.commit_msg, '[destroy eks]')"
+      uses: hashicorp/terraform-github-actions@master
+      with:
+        tf_actions_version: 0.12.20
+        tf_actions_subcommand: 'plan'
+        args: '-destroy -out=./destroy-plan'
+        tf_actions_working_dir: 'terraform'
+
+    - name: Terraform apply
+      if: "!contains(env.commit_msg, '[destroy eks]')"
+      uses: hashicorp/terraform-github-actions@master
+      with:
+        tf_actions_version: 0.12.20
+        tf_actions_subcommand: 'apply'
+        tf_actions_working_dir: 'terraform'
+
+    # Taken from https://github.com/hashicorp/terraform-github-actions/issues/43
+    - name: Terraform apply for destroy
+      if: "contains(env.commit_msg, '[destroy eks]')"
+      uses: hashicorp/terraform-github-actions@master
+      with:
+        tf_actions_version: 0.12.20
+        tf_actions_subcommand: 'apply'
+        args: './destroy-plan'
+        tf_actions_working_dir: 'terraform'
+
+  kubernetes-deploy:
+    name: Deploy Kubernetes manifests to EKS
+    needs:
+    - eks-provisioner
+    runs-on: ubuntu-18.04
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    # Taken from https://github.community/t5/GitHub-Actions/Accessing-commit-message-in-pull-request-event/td-p/40856
+    - name: Get commit message
+      run: |
+        echo ::set-env name=commit_msg::$(git log --format=%B -n 1 ${{ github.event.after }})
+
+    - name: Show commit message
+      run: echo $commit_msg
+
+    - name: Configure AWS Credentials
+      if: "!contains(env.commit_msg, '[destroy eks]')"
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Apply Kubernetes manifests
+      if: "!contains(env.commit_msg, '[destroy eks]')"
+      working-directory: ./k8s/
+      run: |
+        aws eks update-kubeconfig --name ${CLUSTER_NAME}
+        kubectl apply -f samples-bi-service.yaml
+        kubectl apply -f samples-bi-deployment.yaml
+        kubectl rollout status deployment/${DEPLOYMENT_NAME}
+
